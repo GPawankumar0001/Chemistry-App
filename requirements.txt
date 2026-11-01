@@ -1,0 +1,6 @@
+streamlit>=1.35
+rdkit>=2023.9.1
+py3Dmol>=2.0
+pandas>=2.0
+requests>=2.31
+Pillow>=10.0

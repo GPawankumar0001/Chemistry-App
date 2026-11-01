@@ -1,183 +1,319 @@
-"""SMILES in Chemistry - SRM Institute of Science and Technology (SRM IST), Tiruchirappalli."""
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from utils import MOLECULES_DB, GLOBAL_DISEASES_DB, get_molecule_data, generate_3d_sdf
 
-import utils
+# Page Configuration
+st.set_page_config(
+    page_title="SMILES in Chemistry | SRM IST Tiruchirappalli",
+    page_icon="🧪",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-INST = "SRM Institute of Science and Technology (SRM IST), Tiruchirappalli"
+# Load Custom CSS Styling
+try:
+    with open("assets/style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+except FileNotFoundError:
+    pass
 
-st.set_page_config(page_title="SMILES in Chemistry | SRM IST Tiruchirappalli", page_icon="🧪", layout="wide")
-css = Path(__file__).parent / "assets" / "style.css"
-st.markdown(f"<style>{css.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+# Sidebar Navigation & Branding
+st.sidebar.markdown("""
+<div style="text-align: center; padding: 10px;">
+    <h2 style="color: #2563eb; margin-bottom: 0px;">🧬 SMILES Engine</h2>
+    <p style="font-size: 0.85rem; color: #64748b;"><b>SRM Institute of Science and Technology</b><br>Tiruchirappalli, Tamil Nadu</p>
+</div>
+<hr style="margin: 10px 0;">
+""", unsafe_allow_html=True)
 
-st.session_state.setdefault("query", "Aspirin")
+nav_selection = st.sidebar.radio(
+    "Navigation Hub",
+    [
+        "🏠 Home / Dashboard",
+        "🧪 Molecule & Drug Explorer",
+        "🧊 3D Structure & py3Dmol Viewer",
+        "📊 Comparative Analysis & Pros/Cons",
+        "🌍 Global Health & Disease Solutions",
+        "ℹ️ About & Credits"
+    ]
+)
 
-# ---------- sidebar ----------
-PAGES = ["🏠 Home / Dashboard", "🧪 Molecule & Drug Explorer", "🧊 3D Structure Viewer",
-         "📊 Comparative Analysis & Pros/Cons", "ℹ️ About & Credits"]
-with st.sidebar:
-    st.markdown('<div class="side-brand">SMILES in Chemistry</div>'
-                f'<div class="side-inst">{INST}</div>', unsafe_allow_html=True)
-    st.divider()
-    page = st.radio("Navigate", PAGES, label_visibility="collapsed")
-    st.divider()
-    st.caption("Quick load")
-    for name in utils.PRESETS:
-        if st.button(name, key=f"side_{name}", use_container_width=True):
-            st.session_state["query"] = name
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⚡ Quick Molecule Load")
+quick_load = st.sidebar.selectbox("Select preset compound:", ["-- Choose --"] + list(MOLECULES_DB.keys()))
 
+# Main State Initialization
+if "active_mol" not in st.session_state:
+    st.session_state.active_mol = "Aspirin"
 
-def current():
-    """Resolve the active query once per rerun."""
-    info = utils.resolve(st.session_state["query"])
-    if info is None:
-        st.error("No match found. Check the spelling, or paste a valid SMILES string such as CC(=O)OC1=CC=CC=C1C(=O)O.")
-    return info
+if quick_load != "-- Choose --":
+    st.session_state.active_mol = quick_load
 
-
-def search_box(key):
-    c1, c2 = st.columns([5, 1])
-    q = c1.text_input("Chemical name or SMILES", value=st.session_state["query"], key=f"in_{key}",
-                      placeholder="Aspirin, Caffeine, or CC(=O)OC1=CC=CC=C1C(=O)O")
-    c2.write("")
-    c2.write("")
-    if c2.button("Search", key=f"go_{key}", use_container_width=True):
-        st.session_state["query"] = q
-        st.rerun()
-    cols = st.columns(len(utils.PRESETS))
-    for col, name in zip(cols, utils.PRESETS):
-        if col.button(name, key=f"{key}_{name}", use_container_width=True):
-            st.session_state["query"] = name
-            st.rerun()
-
-
-# ---------- pages ----------
-if page == PAGES[0]:
-    st.markdown(f"""
-    <div class="hero">
-      <span class="inst">{INST}</span>
-      <h1>Read molecules the way chemists write them.</h1>
-      <p>Type a drug name or a SMILES string and get its formula, drug-likeness properties, an interactive 3D model
-      and a plain-language summary of benefits and risks.</p>
-      <div class="smiles">CC(=O)OC1=CC=CC=C1C(=O)O<br>CN1C=NC2=C1C(=O)N(C(=O)N2C)C</div>
-    </div>""", unsafe_allow_html=True)
-    st.write("")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Built-in molecules", len(utils.PRESETS))
-    m2.metric("Properties per molecule", 10)
-    m3.metric("3D render styles", 4)
-    m4.metric("Live database", "PubChem")
-    st.subheader("Search a molecule")
-    search_box("home")
-    info = utils.resolve(st.session_state["query"])
-    if info:
-        c1, c2 = st.columns([1, 1])
-        c1.image(utils.mol_image(info["smiles"]), caption=info["name"])
-        c2.markdown(f"**{info['name']}**")
-        c2.code(info["smiles"], language=None)
-        c2.caption("Open the Molecule & Drug Explorer for full details.")
-    st.subheader("What is SMILES?")
+# ----------------------------------------------------
+# PAGE 1: HOME / DASHBOARD
+# ----------------------------------------------------
+if nav_selection == "🏠 Home / Dashboard":
     st.markdown("""
-SMILES (Simplified Molecular Input Line Entry System) writes a molecule as one line of text. Atoms are letters,
-bonds are symbols, and the string can be turned back into a structure by software.
-""")
-    st.dataframe(pd.DataFrame([
-        ("Atoms", "C, N, O", "Aliphatic carbon, nitrogen, oxygen"),
-        ("Bonds", "= and #", "Double and triple bond; single bonds are implied"),
-        ("Branches", "CC(=O)O", "Parentheses mark a side group"),
-        ("Rings", "C1CCCCC1", "Matching digits close a ring (cyclohexane)"),
-        ("Aromatic", "c1ccccc1", "Lowercase letters mark aromatic atoms (benzene)"),
-    ], columns=["Feature", "Example", "Meaning"]), hide_index=True, use_container_width=True)
+    <div style="background: linear-gradient(135deg, #1e3a8a, #2563eb); padding: 40px; border-radius: 16px; color: white; box-shadow: 0 10px 25px rgba(37,99,235,0.2);">
+        <h1 style="color: white; margin-bottom: 10px;">SMILES in Chemistry & Pharmacological Intelligence</h1>
+        <h3 style="color: #93c5fd; font-weight: 400; margin-top: 0;">SRM Institute of Science and Technology (SRM IST), Tiruchirappalli</h3>
+        <p style="font-size: 1.1rem; max-width: 800px; line-height: 1.6; margin-top: 20px;">
+            Welcome to the next-generation computational chemistry platform. Explore chemical SMILES structures, interact with real-time 3D molecular conformations, analyze pharmaceutical properties across age brackets, and review global disease solutions and chemical alternatives.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>🔬 Presets</h3>
+            <p style="font-size: 1.5rem; font-weight: bold; color: #2563eb;">6+ Core Drugs</p>
+            <p style="font-size: 0.85rem; color: #64748b;">Expandable with PubChem REST API & RDKit parsing.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>🧊 3D Engine</h3>
+            <p style="font-size: 1.5rem; font-weight: bold; color: #2563eb;">Interactive py3Dmol</p>
+            <p style="font-size: 0.85rem; color: #64748b;">Real-time ball-and-stick, wireframe, and surface rendering.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>💊 Medical Intelligence</h3>
+            <p style="font-size: 1.5rem; font-weight: bold; color: #2563eb;">Global Disease Index</p>
+            <p style="font-size: 0.85rem; color: #64748b;">Pathology, standard treatments, and chemical alternatives.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        st.markdown("""
+        <div class="metric-card">
+            <h3>🏛️ Institution</h3>
+            <p style="font-size: 1.5rem; font-weight: bold; color: #2563eb;">SRM IST Trichy</p>
+            <p style="font-size: 0.85rem; color: #64748b;">Department of Computer Science & Chemistry Research.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-elif page == PAGES[1]:
-    st.title("Molecule & Drug Explorer")
-    search_box("exp")
-    info = current()
-    if info:
-        props = utils.properties(info["smiles"])
-        st.subheader(info["name"])
-        c1, c2 = st.columns([1, 1.4])
-        c1.image(utils.mol_image(info["smiles"]))
-        c2.markdown(f"**IUPAC name:** {info['iupac']}")
-        c2.markdown(f"**Source:** {info['source']}")
-        c2.markdown("**SMILES**")
-        c2.code(info["smiles"], language=None)
-        k = st.columns(5)
-        for col, key in zip(k, ["Molecular Formula", "Molecular Weight (g/mol)", "LogP", "TPSA (Å²)", "Lipinski Violations"]):
-            col.metric(key, props[key])
-        k = st.columns(2)
-        k[0].metric("H-Bond Donors", props["H-Bond Donors"])
-        k[1].metric("H-Bond Acceptors", props["H-Bond Acceptors"])
-        t1, t2 = st.columns(2)
-        t1.markdown("##### Structural properties")
-        t1.dataframe(pd.DataFrame(props.items(), columns=["Property", "Value"]).astype(str), hide_index=True, use_container_width=True)
-        t2.markdown("##### Elemental composition (including hydrogens)")
-        t2.dataframe(pd.DataFrame(utils.element_table(info["smiles"])), hide_index=True, use_container_width=True)
-        ins = utils.INSIGHTS.get(info["name"])
-        st.markdown("##### Pharmacology")
-        if ins:
-            st.markdown(f"**Uses:** {ins['use']}")
-            st.markdown(f"**Mechanism of action:** {ins['moa']}")
-            p, c = st.columns(2)
-            p.markdown('<div class="glass proscons-pro"><b>Pros</b><ul>' + "".join(f"<li>{x}</li>" for x in ins["pros"]) + "</ul></div>", unsafe_allow_html=True)
-            c.markdown('<div class="glass proscons-con"><b>Cons</b><ul>' + "".join(f"<li>{x}</li>" for x in ins["cons"]) + "</ul></div>", unsafe_allow_html=True)
-        else:
-            st.info("Curated usage and pros/cons are available for the six built-in molecules. Properties above are computed for any valid SMILES.")
+    st.markdown("---")
+    st.subheader("📌 What is SMILES Notation?")
+    st.markdown("""
+    **SMILES** (Simplified Molecular-Input Line-Entry System) is a chemical notation using short ASCII character strings to specify the structure of chemical molecules. Developed in the late 1980s, it allows computers to store, parse, and compare chemical topologies effortlessly.
+    * Example: **Aspirin** is represented as `CC(=O)Oc1ccccc1C(=O)O`
+    * Example: **Caffeine** is represented as `CN1C=NC2=C1C(=O)N(C(=O)N2C)C`
+    """)
 
-elif page == PAGES[2]:
-    st.title("3D Structure Viewer")
-    search_box("3d")
-    info = current()
-    if info:
-        a, b = st.columns([1, 1])
-        style = a.selectbox("Style", ["Ball and stick", "Stick", "Space filling", "Wireframe"])
-        spin = b.toggle("Auto-rotate", value=False)
-        sdf = utils.sdf_block(info["smiles"])
-        if sdf is None:
-            st.error("A 3D conformer could not be generated for this molecule. Try a simpler structure.")
-        else:
-            st.caption(f"{info['name']}: drag to rotate, scroll to zoom, right-drag to pan.")
-            components.html(utils.viewer_html(sdf, style, spin), height=500)
-            st.download_button("Download SDF", sdf, file_name=f"{info['name']}.sdf")
-
-elif page == PAGES[3]:
-    st.title("Comparative Analysis & Pros/Cons")
-    picks = st.multiselect("Choose molecules to compare", list(utils.PRESETS), default=["Aspirin", "Ibuprofen", "Paracetamol"])
-    if len(picks) < 2:
-        st.info("Pick at least two molecules to compare.")
+# ----------------------------------------------------
+# PAGE 2: MOLECULE & DRUG EXPLORER
+# ----------------------------------------------------
+elif nav_selection == "🧪 Molecule & Drug Explorer":
+    st.header("🧪 Advanced Molecule & Drug Explorer")
+    st.write("Search any chemical by common name or paste a raw SMILES string to compute full biochemical parameters.")
+    
+    user_query = st.text_input("Enter Molecule Name or SMILES string:", value=st.session_state.active_mol)
+    
+    mol_info = get_molecule_data(user_query)
+    
+    if mol_info:
+        st.success(f"Successfully loaded data for: **{mol_info['name']}** (Source: {mol_info['source']})")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Molecular Formula", mol_info["formula"])
+        c2.metric("Molecular Weight", f"{mol_info['mw']} g/mol")
+        c3.metric("Lipophilicity (LogP)", mol_info["logp"])
+        c4.metric("Topological Polar Surface Area", f"{mol_info['tpsa']} Å²")
+        
+        st.markdown("---")
+        
+        tab_prop, tab_med, tab_dos = st.tabs(["📐 Structural Properties", "🩺 Pharmacological Usage & Pros/Cons", "👶 Age-Level Dosages"])
+        
+        with tab_prop:
+            st.subheader("Chemical & Topological Parameters")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write(f"**IUPAC Name:** `{mol_info['iupac']}`")
+                st.write(f"**SMILES String:** `{mol_info['smiles']}`")
+                st.write(f"**Category:** {mol_info['category']}")
+            with col_b:
+                st.write(f"**Hydrogen Bond Donors:** {mol_info['h_donors']}")
+                st.write(f"**Hydrogen Bond Acceptors:** {mol_info['h_acceptors']}")
+                lipinski_pass = "✅ Pass" if mol_info['mw'] <= 500 and mol_info['logp'] <= 5 and mol_info['h_donors'] <= 5 and mol_info['h_acceptors'] <= 10 else "⚠️ Review"
+                st.write(f"**Lipinski's Rule of Five:** {lipinski_pass}")
+                
+        with tab_med:
+            st.subheader("Medical & Therapeutic Profile")
+            st.info(f"**Primary Uses:** {mol_info['uses']}")
+            st.warning(f"**Mechanism of Action:** {mol_info['mechanism']}")
+            
+            p_col, c_col = st.columns(2)
+            with p_col:
+                st.markdown("### ✅ Benefits & Pros")
+                for pro in mol_info['pros']:
+                    st.markdown(f"- {pro}")
+            with c_col:
+                st.markdown("### ❌ Drawbacks & Cons")
+                for con in mol_info['cons']:
+                    st.markdown(f"- {con}")
+                    
+        with tab_dos:
+            st.subheader("Age-Level & Demographic Dosage Guidelines")
+            for group, dose in mol_info['dosages'].items():
+                st.markdown(f"**{group}** \n> {dose}")
+            st.caption(f"🌍 **Global Context:** {mol_info['global_context']}")
+            
     else:
-        rows = {n: utils.properties(utils.PRESETS[n]) for n in picks}
-        df = pd.DataFrame(rows).T
-        st.dataframe(df.astype(str), use_container_width=True)
-        num = df[["Molecular Weight (g/mol)", "LogP", "TPSA (Å²)"]].astype(float)
-        st.bar_chart(num["Molecular Weight (g/mol)"])
-        st.bar_chart(num[["LogP", "TPSA (Å²)"]])
-        for n in picks:
-            ins = utils.INSIGHTS[n]
-            with st.expander(f"{n}: benefits and drawbacks", expanded=False):
-                st.markdown(f"**Uses:** {ins['use']}")
-                st.markdown(f"**Mechanism:** {ins['moa']}")
-                p, c = st.columns(2)
-                p.success("**Pros**\n\n" + "\n".join(f"- {x}" for x in ins["pros"]))
-                c.error("**Cons**\n\n" + "\n".join(f"- {x}" for x in ins["cons"]))
-    st.caption("Educational summaries only. They are not medical advice.")
+        st.error("Compound not recognized in local database or PubChem API. Please check your spelling or verify the SMILES string syntax.")
 
-else:
-    st.title("About & Credits")
+# ----------------------------------------------------
+# PAGE 3: 3D STRUCTURE VIEWER
+# ----------------------------------------------------
+elif nav_selection == "🧊 3D Structure & py3Dmol Viewer":
+    st.header("🧊 Interactive 3D Molecular Conformation Viewer")
+    st.write("Visualize real-time 3D ball-and-stick models generated via RDKit UFF optimization and rendered with py3Dmol.")
+    
+    target_mol = st.selectbox("Select Compound for 3D Rendering:", list(MOLECULES_DB.keys()))
+    smiles_val = MOLECULES_DB[target_mol]["smiles"]
+    
+    col_v1, col_v2 = st.columns([1, 2])
+    with col_v1:
+        st.markdown(f"### {target_mol}")
+        st.write(f"**Formula:** {MOLECULES_DB[target_mol]['formula']}")
+        st.write(f"**SMILES:** `{smiles_val}`")
+        view_style = st.selectbox("Rendering Style", ["ball and stick", "stick", "sphere", "line"])
+        bg_color = st.color_picker("Background Color", "#0f172a")
+        
+    with col_v2:
+        sdf_data = generate_3d_sdf(smiles_val)
+        if sdf_data:
+            # Render py3Dmol inside Streamlit component
+            html_code = f"""
+            <div id="container" style="width: 100%; height: 450px; position: relative; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></div>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.3/3Dmol-min.js"></script>
+            <script>
+              let element = document.getElementById("container");
+              let config = {{ backgroundColor: "{bg_color}" }};
+              let viewer = $3Dmol.createViewer(element, config);
+              let vdata = `{sdf_data}`;
+              viewer.addModel(vdata, "sdf");
+              viewer.setStyle({{}}, {{"{view_style}": {{"radius": 0.25}}}});
+              viewer.zoomTo();
+              viewer.render();
+            </script>
+            """
+            components.html(html_code, height=470)
+        else:
+            st.error("Failed to generate 3D spatial coordinates for this molecule.")
+
+# ----------------------------------------------------
+# PAGE 4: COMPARATIVE ANALYSIS & PROS/CONS
+# ----------------------------------------------------
+elif nav_selection == "📊 Comparative Analysis & Pros/Cons":
+    st.header("📊 Multi-Molecule Comparative Analysis")
+    st.write("Select multiple compounds to compare physicochemical metrics and pharmacological profiles side by side.")
+    
+    selected_compounds = st.multiselect("Choose compounds to compare:", list(MOLECULES_DB.keys()), default=["Aspirin", "Paracetamol", "Ibuprofen"])
+    
+    if len(selected_compounds) > 0:
+        comp_data = []
+        for c in selected_compounds:
+            d = MOLECULES_DB[c]
+            comp_data.append({
+                "Compound": c,
+                "Molecular Weight": d["mw"],
+                "LogP (Lipophilicity)": d["logp"],
+                "TPSA (Å²)": d["tpsa"],
+                "H-Donors": d["h_donors"],
+                "H-Acceptors": d["h_acceptors"]
+            })
+        df_comp = pd.DataFrame(comp_data)
+        
+        st.dataframe(df_comp, use_container_width=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_ch1, col_ch2 = st.columns(2)
+        
+        with col_ch1:
+            st.subheader("Molecular Weight Comparison")
+            fig_mw = px.bar(df_comp, x="Compound", y="Molecular Weight", color="Compound", title="MW g/mol Distribution")
+            st.plotly_chart(fig_mw, use_container_width=True)
+            
+        with col_ch2:
+            st.subheader("Lipophilicity (LogP) Profile")
+            fig_logp = px.scatter(df_comp, x="Compound", y="LogP (Lipophilicity)", size="Molecular Weight", color="Compound", title="LogP vs Compound")
+            st.plotly_chart(fig_logp, use_container_width=True)
+            
+        st.markdown("---")
+        st.subheader("Detailed Benefit & Drawback Breakdowns")
+        for c in selected_compounds:
+            with st.expander(f"📌 {c}: Benefits, Drawbacks & Clinical Uses"):
+                d = MOLECULES_DB[c]
+                st.write(f"**Uses:** {d['uses']}")
+                st.write(f"**Mechanism:** {d['mechanism']}")
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    st.markdown("**Pros:**")
+                    for p in d['pros']: st.markdown(f"- {p}")
+                with bc2:
+                    st.markdown("**Cons:**")
+                    for cn in d['cons']: st.markdown(f"- {cn}")
+    else:
+        st.info("Please select at least one compound above to view comparative analytics.")
+
+# ----------------------------------------------------
+# PAGE 5: GLOBAL HEALTH & DISEASE SOLUTIONS
+# ----------------------------------------------------
+elif nav_selection == "🌍 Global Health & Disease Solutions":
+    st.header("🌍 Global Health Intelligence & Medical Solutions Engine")
+    st.write("Explore known world health conditions, pathological burdens, conventional frontline medicines, and chemical alternatives engineered for global welfare.")
+    
+    disease_choice = st.selectbox("Select Global Health Condition:", list(GLOBAL_DISEASES_DB.keys()))
+    dis_info = GLOBAL_DISEASES_DB[disease_choice]
+    
     st.markdown(f"""
-**SMILES in Chemistry** is an educational dashboard created at **{INST}**.
+    <div style="background: rgba(37,99,235,0.05); border-left: 5px solid #2563eb; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+        <h3 style="margin-top:0; color: #1e3a8a;">{disease_choice}</h3>
+        <p><b>Global Burden:</b> {dis_info['global_burden']}</p>
+        <p><b>Key Pathology:</b> {dis_info['key_pathology']}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        st.subheader("💊 Standard Frontline Medicines")
+        for med in dis_info['standard_medicines']:
+            st.markdown(f"- **{med}**")
+            
+    with dc2:
+        st.subheader("🌿 Chemical & Biological Alternatives")
+        st.write(dis_info['chemical_alternatives'])
+        
+    st.markdown("---")
+    st.info(f"🛡️ **Strategic Prevention & Management Protocol:** {dis_info['preventative_strategy']}")
 
-- **Chemistry engine:** RDKit (descriptors, 2D drawing, 3D embedding)
-- **Data:** PubChem PUG REST API for name lookup and IUPAC names
-- **3D viewer:** py3Dmol
-- **Interface:** Streamlit
+# ----------------------------------------------------
+# PAGE 6: ABOUT & CREDITS
+# ----------------------------------------------------
+elif nav_selection == "ℹ️ About & Credits":
+    st.header("ℹ️ About the Project & Institution")
+    st.markdown("""
+    ### 🏛️ SRM Institute of Science and Technology (SRM IST), Tiruchirappalli
+    This high-performance computational web application was engineered to bridge computer science, molecular informatics, and clinical chemistry. Developed as an interactive research-grade dashboard to demonstrate real-time SMILES parsing, 3D molecular modeling, and global health solution tracking.
+    
+    * **Institution:** SRM Institute of Science and Technology (SRM IST), Tiruchirappalli, Tamil Nadu
+    * **Core Technologies:** Python, Streamlit, RDKit, py3Dmol, Plotly, PubChem REST API.
+    * **Academic Disclaimer:** *Educational, computational, and research summaries only. Not intended to serve as professional medical advice or clinical prescription.*
+    """)
 
-**Developers:** add your names, department and guide here.
-
-Drug information is a simplified teaching summary and must not be used for medical decisions.
-""")
-
-st.markdown(f'<div class="footer">Hosted by <b>{INST}</b> · SMILES in Chemistry</div>', unsafe_allow_html=True)
+# Footer Branding
+st.markdown("""
+<div class="custom-footer">
+    Hosted by <b>SRM Institute of Science and Technology (SRM IST), Tiruchirappalli</b> · SMILES in Chemistry Platform
+</div>
+""", unsafe_allow_html=True)
